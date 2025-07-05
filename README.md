@@ -1,86 +1,240 @@
-# Age
+# DuckDB Age Extension
 
-This repository is based on https://github.com/duckdb/extension-template, check it out if you want to build and ship your own DuckDB extension.
+A DuckDB extension that registers the 'age' secret type, enabling native secret management for [age encryption](https://github.com/FiloSottile/age) keys within DuckDB. This extension allows you to securely store and manage age encryption key pairs for use with other extensions like [file-tools](https://github.com/duckdb/file-tools-extension).
 
----
+## Features
 
-This extension, Age, allow you to ... <extension_goal>.
+- **Native Secret Management**: Integrates with DuckDB's built-in secret management system
+- **Age Key Validation**: Validates age public keys (`age1...`) and private keys (`AGE-SECRET-KEY-1...`)
+- **File-based Keys**: Support for reading keys from external files (recommended for security)
+- **Inline Keys**: Support for inline key specification
+- **Key Redaction**: Private keys are automatically redacted in logs and error messages
+- **Flexible Configuration**: Mix and match inline keys with file-based keys
 
+## Installation
 
-## Building
-### Managing dependencies
-DuckDB extensions uses VCPKG for dependency management. Enabling VCPKG is very simple: follow the [installation instructions](https://vcpkg.io/en/getting-started) or just run the following:
+### Building from Source
+
+1. Clone the repository with submodules:
 ```shell
-git clone https://github.com/Microsoft/vcpkg.git
-./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+git clone --recurse-submodules https://github.com/your-repo/duckdb-age.git
+cd duckdb-age
 ```
-Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
 
-### Build steps
-Now to build the extension, run:
-```sh
+2. Build the extension:
+```shell
 make
 ```
-The main binaries that will be built are:
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/age/age.duckdb_extension
-```
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `age.duckdb_extension` is the loadable binary as it would be distributed.
 
-## Running the extension
-To run the extension code, simply start the shell with `./build/release/duckdb`.
+The build produces:
+- `./build/release/duckdb` - DuckDB binary with age extension pre-loaded
+- `./build/release/extension/age/age.duckdb_extension` - Loadable extension binary
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `age()` that takes a string arguments and returns a string:
-```
-D select age('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Age Jane 🐥 │
-└───────────────┘
+## Usage
+
+### Loading the Extension
+
+```sql
+LOAD 'age';
 ```
 
-## Running the tests
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
-```sh
+### Creating Age Secrets
+
+#### Using Inline Keys
+```sql
+CREATE SECRET my_age_key (
+    TYPE 'age',
+    public_key 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p',
+    private_key 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8',
+    key_id 'personal_key'
+);
+```
+
+#### Using File-based Keys (Recommended)
+```sql
+CREATE SECRET my_age_key (
+    TYPE 'age',
+    public_key_file '/path/to/public_key.txt',
+    private_key_file '/path/to/private_key.txt',
+    key_id 'file_key'
+);
+```
+
+#### Mixed Approach
+```sql
+CREATE SECRET mixed_key (
+    TYPE 'age',
+    public_key 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p',
+    private_key_file '/path/to/private_key.txt'
+);
+```
+
+### Managing Secrets
+
+#### List Age Secrets
+```sql
+SELECT name, type, provider FROM duckdb_secrets() WHERE type = 'age';
+```
+
+#### Drop Secrets
+```sql
+DROP SECRET my_age_key;
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `public_key` | VARCHAR | No* | Age public key (starts with `age1`) |
+| `private_key` | VARCHAR | No* | Age private key (starts with `AGE-SECRET-KEY-1`) |
+| `public_key_file` | VARCHAR | No* | Path to file containing public key |
+| `private_key_file` | VARCHAR | No* | Path to file containing private key |
+| `key_id` | VARCHAR | No | Optional identifier for the key pair |
+
+*At least one key (public or private) must be specified. Cannot specify both inline and file versions of the same key type.
+
+### Validation Rules
+
+- Public keys must start with `age1`
+- Private keys must start with `AGE-SECRET-KEY-1`
+- Cannot specify both `public_key` and `public_key_file`
+- Cannot specify both `private_key` and `private_key_file`
+- Key files must exist and be readable
+- Key files have a 1MB size limit
+- Key files are automatically trimmed of whitespace
+
+## Testing
+
+### Running Tests
+
+#### Quick Test Script
+Run the comprehensive test script:
+```shell
+./test_extension.sh
+```
+
+#### Manual Testing via Make
+Run the complete test suite:
+```shell
 make test
 ```
 
-### Installing the deployed binaries
-To install your extension binaries from S3, you will need to do two things. Firstly, DuckDB should be launched with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. Some examples:
-
-CLI:
+#### Individual Test Files
+Run specific test files using the unittest runner:
 ```shell
-duckdb -unsigned
+# Note: .test files use DuckDB's test format and require the unittest runner
+# Manual SQL testing is recommended for development
 ```
 
-Python:
-```python
-con = duckdb.connect(':memory:', config={'allow_unsigned_extensions' : 'true'})
+### Manual Testing
+
+1. Start DuckDB with the extension:
+```shell
+./build/release/duckdb
 ```
 
-NodeJS:
-```js
-db = new duckdb.Database(':memory:', {"allow_unsigned_extensions": "true"});
-```
-
-Secondly, you will need to set the repository endpoint in DuckDB to the HTTP url of your bucket + version of the extension
-you want to install. To do this run the following SQL query in DuckDB:
+2. Test basic functionality:
 ```sql
-SET custom_extension_repository='bucket.s3.eu-west-1.amazonaws.com/<your_extension_name>/latest';
-```
-Note that the `/latest` path will allow you to install the latest extension version available for your current version of
-DuckDB. To specify a specific version, you can pass the version instead.
+-- Load extension
+LOAD 'age';
 
-After running these steps, you can install and load your extension using the regular INSTALL/LOAD commands in DuckDB:
-```sql
-INSTALL age
-LOAD age
+-- Verify extension loads
+SELECT age_version();
+
+-- Create test key files
+.system echo 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p' > /tmp/test_pub.txt
+.system echo 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8' > /tmp/test_priv.txt
+
+-- Test file-based secret creation
+CREATE SECRET test_key (
+    TYPE 'age',
+    public_key_file '/tmp/test_pub.txt',
+    private_key_file '/tmp/test_priv.txt'
+);
+
+-- Verify secret creation
+SELECT * FROM duckdb_secrets() WHERE type = 'age';
+
+-- Clean up
+DROP SECRET test_key;
 ```
+
+### Test Coverage
+
+The test suite covers:
+- Basic secret creation with inline keys
+- File-based key loading
+- Validation of key formats
+- Error handling for invalid keys
+- Error handling for missing files
+- Mutual exclusivity validation
+- Secret listing and management
+
+## Integration with Other Extensions
+
+This extension is designed to work with other DuckDB extensions that support age encryption:
+
+```sql
+-- Example with file-tools extension (hypothetical)
+LOAD 'age';
+LOAD 'file_tools';
+
+CREATE SECRET my_age_key (
+    TYPE 'age',
+    public_key_file '~/.age/key.pub',
+    private_key_file '~/.age/key.priv'
+);
+
+-- Use the secret for encryption/decryption operations
+-- SELECT age_encrypt_file('data.txt', 'encrypted.age', 'my_age_key');
+```
+
+## Security Considerations
+
+- **File-based keys are recommended** over inline keys for production use
+- Private keys are automatically marked for redaction in logs
+- Use appropriate file permissions (e.g., `600`) on key files
+- Store key files outside the database directory
+- Consider using dedicated key management systems for production deployments
+
+## Development
+
+### Project Structure
+```
+duckdb-age/
+├── src/
+│   ├── age_extension.cpp     # Main extension implementation
+│   └── include/
+│       └── age_extension.hpp # Extension header
+├── test/sql/
+│   ├── age.test             # Basic extension tests
+│   └── age_secret.test      # Secret functionality tests
+├── extension_config.cmake   # Extension configuration
+└── README.md               # This file
+```
+
+### Building for Development
+
+1. Make changes to source files
+2. Rebuild: `make`
+3. Test: `make test`
+4. Run specific tests: `./build/release/duckdb < test/sql/age_secret.test`
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Ensure all tests pass
+6. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Related Projects
+
+- [age](https://github.com/FiloSottile/age) - Modern encryption tool
+- [DuckDB](https://duckdb.org/) - In-process SQL OLAP database
+- [DuckDB Extensions](https://duckdb.org/docs/extensions/overview) - DuckDB extension ecosystem
