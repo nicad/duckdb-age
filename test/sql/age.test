@@ -1,0 +1,23 @@
+# name: test/sql/age.test
+# description: test age extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT age('Sam');
+----
+Catalog Error: Scalar Function with name age does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require age
+
+# Confirm the extension works
+query I
+SELECT age('Sam');
+----
+Age Sam 🐥
+
+query I
+SELECT age_openssl_version('Michael') ILIKE 'Age Michael, my linked OpenSSL version is OpenSSL%';
+----
+true
