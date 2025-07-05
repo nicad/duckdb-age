@@ -12,6 +12,17 @@
 #include <fstream>
 #include <sstream>
 
+// FFI declarations for Rust functions
+extern "C" {
+    struct CKeyPair {
+        char* public_key;
+        char* private_key;
+    };
+    
+    CKeyPair age_keygen_c();
+    void free_c_string(char* s);
+}
+
 namespace duckdb {
 
 static string ReadKeyFromFile(const string &file_path) {
@@ -131,6 +142,33 @@ static void RegisterAgeSecretType(DatabaseInstance &instance) {
     ExtensionUtil::RegisterFunction(instance, config_fun);
 }
 
+// Age keygen function - returns struct with public_key and private_key
+static void AgeKeygenFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    // Call Rust FFI function
+    CKeyPair keys = age_keygen_c();
+    
+    // Set result as constant vector since this function doesn't depend on input
+    result.SetVectorType(VectorType::CONSTANT_VECTOR);
+    
+    // Get struct children vectors
+    auto &struct_children = StructVector::GetEntries(result);
+    auto &public_key_vector = *struct_children[0];
+    auto &private_key_vector = *struct_children[1];
+    
+    // Set constant values
+    public_key_vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+    private_key_vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+    
+    *ConstantVector::GetData<string_t>(public_key_vector) = 
+        StringVector::AddString(public_key_vector, keys.public_key);
+    *ConstantVector::GetData<string_t>(private_key_vector) = 
+        StringVector::AddString(private_key_vector, keys.private_key);
+    
+    // Free C strings
+    free_c_string(keys.public_key);
+    free_c_string(keys.private_key);
+}
+
 // Dummy function to verify extension loads
 static void AgeVersionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
     auto &result_vector = result;
@@ -141,6 +179,12 @@ static void AgeVersionFunction(DataChunk &args, ExpressionState &state, Vector &
 static void LoadInternal(DatabaseInstance &instance) {
     // Register the age secret type
     RegisterAgeSecretType(instance);
+    
+    // Register age_keygen function
+    auto age_keygen_fun = ScalarFunction("age_keygen", {LogicalType::INTEGER}, 
+        LogicalType::STRUCT({{"public_key", LogicalType::VARCHAR}, {"private_key", LogicalType::VARCHAR}}),
+        AgeKeygenFunction);
+    ExtensionUtil::RegisterFunction(instance, age_keygen_fun);
     
     // Register a dummy function to verify extension loads
     auto age_version_fun = ScalarFunction("age_version", {}, LogicalType::VARCHAR, AgeVersionFunction);
