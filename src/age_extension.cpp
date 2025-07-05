@@ -19,8 +19,15 @@ extern "C" {
         char* private_key;
     };
     
+    struct CBytes {
+        uint8_t* data;
+        size_t len;
+    };
+    
     CKeyPair age_keygen_c();
+    CBytes age_encrypt_c(const uint8_t* data, size_t data_len, const char* recipient);
     void free_c_string(char* s);
+    void free_c_bytes(CBytes bytes);
 }
 
 namespace duckdb {
@@ -169,6 +176,38 @@ static void AgeKeygenFunction(DataChunk &args, ExpressionState &state, Vector &r
     free_c_string(keys.private_key);
 }
 
+// Age encrypt function - encrypts data with a public key
+static void AgeEncryptFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &data_vector = args.data[0];
+    auto &recipient_vector = args.data[1];
+    
+    BinaryExecutor::Execute<string_t, string_t, string_t>(
+        data_vector, recipient_vector, result, args.size(),
+        [&](string_t data, string_t recipient) {
+            // Call Rust FFI function
+            CBytes encrypted = age_encrypt_c(
+                reinterpret_cast<const uint8_t*>(data.GetData()),
+                data.GetSize(),
+                recipient.GetString().c_str()
+            );
+            
+            if (encrypted.data == nullptr) {
+                // Encryption failed - return NULL
+                return string_t();
+            }
+            
+            // Create DuckDB blob from encrypted data
+            auto result_str = StringVector::AddString(result, 
+                reinterpret_cast<const char*>(encrypted.data), encrypted.len);
+            
+            // Free the C bytes
+            free_c_bytes(encrypted);
+            
+            return result_str;
+        }
+    );
+}
+
 // Dummy function to verify extension loads
 static void AgeVersionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
     auto &result_vector = result;
@@ -185,6 +224,11 @@ static void LoadInternal(DatabaseInstance &instance) {
         LogicalType::STRUCT({{"public_key", LogicalType::VARCHAR}, {"private_key", LogicalType::VARCHAR}}),
         AgeKeygenFunction);
     ExtensionUtil::RegisterFunction(instance, age_keygen_fun);
+    
+    // Register age_encrypt function
+    auto age_encrypt_fun = ScalarFunction("age_encrypt", {LogicalType::BLOB, LogicalType::VARCHAR}, 
+        LogicalType::BLOB, AgeEncryptFunction);
+    ExtensionUtil::RegisterFunction(instance, age_encrypt_fun);
     
     // Register a dummy function to verify extension loads
     auto age_version_fun = ScalarFunction("age_version", {}, LogicalType::VARCHAR, AgeVersionFunction);
