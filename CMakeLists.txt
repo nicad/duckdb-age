@@ -17,11 +17,20 @@ include_directories(src/include)
 # Add Rust build as external project
 include(ExternalProject)
 
+# Determine number of parallel jobs for Rust
+include(ProcessorCount)
+ProcessorCount(N)
+if(NOT N EQUAL 0)
+    set(RUST_JOBS ${N})
+else()
+    set(RUST_JOBS 4)
+endif()
+
 ExternalProject_Add(
     rust_age_crypto
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rust
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND cargo build --release
+    BUILD_COMMAND cargo build --release --jobs ${RUST_JOBS}
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/rust/target/release/libduckdb_age_crypto.a
     BUILD_IN_SOURCE 1
