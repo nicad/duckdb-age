@@ -20,17 +20,17 @@ The Age extension provides modern encryption functions for DuckDB using the Age 
 
 ## Scalar Functions
 
-### `age_keygen(dummy)`
+### `age_keygen()`
 
 Generates a new X25519 key pair for Age encryption.
 
 **Syntax**
 ```sql
-age_keygen(0)
+age_keygen()
 ```
 
 **Parameters**
-- `dummy` (`INTEGER`): Dummy parameter (use 0) - required due to DuckDB scalar function limitations
+- None
 
 **Returns**
 `STRUCT` with the following fields:
@@ -46,13 +46,13 @@ age_keygen(0)
 **Example**
 ```sql
 -- Generate a new key pair
-SELECT age_keygen(0) AS keys;
+SELECT age_keygen() AS keys;
 -- Returns: {public_key: "age1...", private_key: "AGE-SECRET-KEY-1..."}
 
 -- Extract individual keys
 SELECT 
-    (age_keygen(0)).public_key AS public_key,
-    (age_keygen(0)).private_key AS private_key;
+    (age_keygen()).public_key AS public_key,
+    (age_keygen()).private_key AS private_key;
 
 -- Store keys in a table for later use
 CREATE TABLE my_keys AS
@@ -60,13 +60,13 @@ SELECT
     'main_key' AS key_name,
     (keys).public_key AS public_key,
     (keys).private_key AS private_key
-FROM (SELECT age_keygen(0) AS keys);
+FROM (SELECT age_keygen() AS keys);
 
 -- Generate multiple key pairs
 SELECT 
     'key_' || row_number() OVER () AS key_name,
-    (age_keygen(0)).public_key AS public_key,
-    (age_keygen(0)).private_key AS private_key
+    (age_keygen()).public_key AS public_key,
+    (age_keygen()).private_key AS private_key
 FROM generate_series(1, 5);
 ```
 
@@ -166,7 +166,7 @@ WITH test_data AS (
     SELECT 'Hello, World!'::BLOB AS original_data
 ),
 keys AS (
-    SELECT (age_keygen(0)).public_key AS pub, (age_keygen(0)).private_key AS priv
+    SELECT (age_keygen()).public_key AS pub, (age_keygen()).private_key AS priv
 ),
 encrypted AS (
     SELECT age_encrypt(original_data, pub) AS encrypted_data
@@ -267,7 +267,7 @@ CREATE SECRET secret_name (
 **Example**
 ```sql
 -- Create a secret with generated keys
-WITH keys AS (SELECT age_keygen(0) AS kp)
+WITH keys AS (SELECT age_keygen() AS kp)
 SELECT 
     'CREATE SECRET my_key (TYPE age, PUBLIC_KEY ''' || (kp).public_key || 
     ''', PRIVATE_KEY ''' || (kp).private_key || ''');' AS create_sql
@@ -414,8 +414,8 @@ WHERE document_type IN ('technical', 'financial');
 -- Generate new keys for rotation
 CREATE SECRET new_production_key (
     TYPE age,
-    PUBLIC_KEY (SELECT (age_keygen(0)).public_key),
-    PRIVATE_KEY (SELECT (age_keygen(0)).private_key)
+    PUBLIC_KEY (SELECT (age_keygen()).public_key),
+    PRIVATE_KEY (SELECT (age_keygen()).private_key)
 );
 
 -- Re-encrypt data with new keys

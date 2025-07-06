@@ -7,18 +7,18 @@ require age
 
 # Test age_keygen function
 query I
-SELECT (age_keygen(0)).public_key LIKE 'age1%' AS valid_public_key;
+SELECT (age_keygen()).public_key LIKE 'age1%' AS valid_public_key;
 ----
 true
 
 query I
-SELECT (age_keygen(0)).private_key LIKE 'AGE-SECRET-KEY-1%' AS valid_private_key;
+SELECT (age_keygen()).private_key LIKE 'AGE-SECRET-KEY-1%' AS valid_private_key;
 ----
 true
 
 # Test age_encrypt function with valid key
 statement ok
-WITH keys AS (SELECT (age_keygen(0)).public_key AS pubkey) 
+WITH keys AS (SELECT (age_keygen()).public_key AS pubkey) 
 SELECT age_encrypt('hello world'::BLOB, pubkey) IS NOT NULL AS encrypted FROM keys;
 
 # Test age_encrypt with invalid key should throw error
@@ -48,7 +48,7 @@ SELECT age_encrypt('hello world'::BLOB, 'test_secret') IS NOT NULL AS encrypted;
 
 # Test age_decrypt function with raw keys
 statement ok
-CREATE TABLE test_keypair AS SELECT (age_keygen(0)) AS kp;
+CREATE TABLE test_keypair AS SELECT (age_keygen()) AS kp;
 
 query I
 WITH keys AS (SELECT (kp).public_key AS pubkey, (kp).private_key AS privkey FROM test_keypair)
@@ -97,7 +97,7 @@ Invalid Input Error: Invalid age identity key:  (not a valid age key or secret n
 
 # Test age_encrypt_multi with multiple recipients
 statement ok
-CREATE TABLE multi_keys AS SELECT (age_keygen(0)) AS k1, (age_keygen(0)) AS k2;
+CREATE TABLE multi_keys AS SELECT (age_keygen()) AS k1, (age_keygen()) AS k2;
 
 query II
 WITH k AS (SELECT (k1).public_key AS pk1, (k2).public_key AS pk2, 

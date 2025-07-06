@@ -7,7 +7,7 @@ A comprehensive DuckDB extension providing modern encryption functions using the
 ## Features
 
 ### Core Encryption Functions
-- **Key Generation**: Generate X25519 key pairs (`age_keygen`)
+- **Key Generation**: Generate X25519 key pairs (`age_keygen()`)
 - **Single Recipient Encryption**: Encrypt data for one recipient (`age_encrypt`)
 - **Multi-Recipient Encryption**: Encrypt data for multiple recipients (`age_encrypt_multi`)
 - **Decryption**: Decrypt age-encrypted data (`age_decrypt`)
@@ -119,7 +119,7 @@ For detailed documentation of all age encryption functions, see [FUNCTIONS.md](F
 #### Generate Keys
 ```sql
 -- Generate a new key pair
-SELECT age_keygen(0) AS keys;
+SELECT age_keygen() AS keys;
 ```
 
 #### Encrypt Data
@@ -253,17 +253,17 @@ LOAD 'age';
 SELECT age_version();
 
 -- Test key generation
-SELECT age_keygen(0) AS keys;
+SELECT age_keygen() AS keys;
 
 -- Test encryption functions
-WITH keys AS (SELECT age_keygen(0) AS kp)
+WITH keys AS (SELECT age_keygen() AS kp)
 SELECT 
     age_encrypt('hello world'::BLOB, (kp).public_key) AS encrypted_data,
     (kp).private_key AS private_key
 FROM keys;
 
 -- Test decryption 
-WITH keys AS (SELECT age_keygen(0) AS kp),
+WITH keys AS (SELECT age_keygen() AS kp),
      encrypted AS (
          SELECT age_encrypt('test message'::BLOB, (kp).public_key) AS data,
                 (kp).private_key AS priv
@@ -309,7 +309,7 @@ This extension provides both standalone encryption functions and secret manageme
 LOAD 'age';
 
 -- Generate keys and encrypt data directly
-WITH keys AS (SELECT age_keygen(0) AS kp)
+WITH keys AS (SELECT age_keygen() AS kp)
 SELECT age_encrypt('sensitive data'::BLOB, (kp).public_key) AS encrypted;
 
 -- Create secrets for reusable keys

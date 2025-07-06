@@ -460,7 +460,7 @@ static void LoadInternal(DatabaseInstance &instance) {
     RegisterAgeSecretType(instance);
     
     // Register age_keygen function
-    auto age_keygen_fun = ScalarFunction("age_keygen", {LogicalType::INTEGER}, 
+    auto age_keygen_fun = ScalarFunction("age_keygen", {}, 
         LogicalType::STRUCT({{"public_key", LogicalType::VARCHAR}, {"private_key", LogicalType::VARCHAR}}),
         AgeKeygenFunction);
     ExtensionUtil::RegisterFunction(instance, age_keygen_fun);
