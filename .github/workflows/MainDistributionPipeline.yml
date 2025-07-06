@@ -23,17 +23,66 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries (stable)
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.3.1
-    with:
-      duckdb_version: v1.3.1
-      ci_tools_version: v1.3.1
-      extension_name: age
+    runs-on: ubuntu-latest
+    env:
+      DUCKDB_VERSION: v1.3.1
+      CI_TOOLS_VERSION: v1.3.1
+      EXTENSION_NAME: age
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build ccache
+      
+      - name: Build Extension
+        env:
+          CI: true
+        run: |
+          make
+      
+      - name: Test Extension
+        run: |
+          echo "LOAD 'age'; SELECT age_version();" | ./build/release/duckdb
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
-    with:
-      duckdb_version: v1.3.1
-      ci_tools_version: main
-      extension_name: age
-      format_checks: 'format;tidy'
+    runs-on: ubuntu-latest
+    env:
+      DUCKDB_VERSION: v1.3.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build ccache
+      
+      - name: Format Check
+        run: |
+          make format-check
+      
+      - name: Build Test
+        env:
+          CI: true
+        run: |
+          make
