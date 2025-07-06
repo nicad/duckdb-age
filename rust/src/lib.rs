@@ -79,7 +79,7 @@ pub extern "C" fn age_encrypt_c(
                 error_message: ptr::null_mut()
             }
         }
-        Err(e) => {
+        Err(_) => {
             let error_msg = format!("Invalid age recipient key: {}", recipient_str);
             CResult { 
                 success: false, 
@@ -139,4 +139,74 @@ pub extern "C" fn free_c_result(result: CResult) {
             let _ = CString::from_raw(result.error_message);
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn age_decrypt_c(
+    data: *const u8,
+    data_len: usize,
+    identity: *const c_char,
+) -> CResult {
+    // Convert inputs from C to Rust
+    let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
+    let identity_str = unsafe {
+        match CStr::from_ptr(identity).to_str() {
+            Ok(s) => s,
+            Err(_) => return CResult { 
+                success: false, 
+                data: ptr::null_mut(), 
+                len: 0,
+                error_message: CString::new("Invalid UTF-8 in identity key").unwrap().into_raw()
+            },
+        }
+    };
+    
+    // Check for empty identity
+    if identity_str.is_empty() {
+        return CResult {
+            success: false,
+            data: ptr::null_mut(),
+            len: 0,
+            error_message: CString::new("Invalid age identity key: (empty)").unwrap().into_raw()
+        };
+    }
+    
+    // Perform decryption
+    match age_decrypt_impl(data_slice, identity_str) {
+        Ok(decrypted) => {
+            let len = decrypted.len();
+            let data_ptr = decrypted.as_ptr() as *mut u8;
+            std::mem::forget(decrypted); // Prevent Rust from freeing the memory
+            CResult { 
+                success: true, 
+                data: data_ptr, 
+                len,
+                error_message: ptr::null_mut()
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Decryption failed: {}", e);
+            CResult { 
+                success: false, 
+                data: ptr::null_mut(), 
+                len: 0,
+                error_message: CString::new(error_msg).unwrap().into_raw()
+            }
+        }
+    }
+}
+
+fn age_decrypt_impl(data: &[u8], identity_str: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Parse identity private key
+    let identity: x25519::Identity = identity_str.parse()?;
+    
+    // Create decryptor
+    let decryptor = age::Decryptor::new(data)?;
+    
+    // Decrypt the data
+    let mut decrypted = Vec::new();
+    let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
+    std::io::copy(&mut reader, &mut decrypted)?;
+    
+    Ok(decrypted)
 }

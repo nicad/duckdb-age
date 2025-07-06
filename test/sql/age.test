@@ -45,3 +45,52 @@ CREATE SECRET test_secret (TYPE age, PUBLIC_KEY 'age1j2tqev8spvn9s9ktkr750ntl03s
 
 statement ok
 SELECT age_encrypt('hello world'::BLOB, 'test_secret') IS NOT NULL AS encrypted;
+
+# Test age_decrypt function with raw keys
+statement ok
+CREATE TABLE test_keypair AS SELECT (age_keygen(0)) AS kp;
+
+query I
+WITH keys AS (SELECT (kp).public_key AS pubkey, (kp).private_key AS privkey FROM test_keypair)
+SELECT age_decrypt(age_encrypt('test message'::BLOB, pubkey), privkey) = 'test message'::BLOB AS decrypted_correctly FROM keys;
+----
+true
+
+# Test age_decrypt with secret name
+query I
+SELECT age_decrypt(
+    age_encrypt('secret test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'),
+    'test_secret'
+) = 'secret test'::BLOB AS decrypted_with_secret;
+----
+true
+
+# Test age_decrypt with both secret names
+query I
+SELECT age_decrypt(
+    age_encrypt('both secrets'::BLOB, 'test_secret'),
+    'test_secret'
+) = 'both secrets'::BLOB AS both_with_secrets;
+----
+true
+
+# Test age_decrypt with invalid private key should throw error
+statement error
+SELECT age_decrypt(age_encrypt('test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'), 'invalid_key');
+----
+Decryption failed
+
+# Test age_decrypt with wrong private key should throw error
+statement error
+SELECT age_decrypt(
+    age_encrypt('test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'), 
+    'AGE-SECRET-KEY-1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+);
+----
+Decryption failed
+
+# Test age_decrypt with empty key should throw error
+statement error
+SELECT age_decrypt(age_encrypt('test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'), '');
+----
+Invalid age identity key: (empty)

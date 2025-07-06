@@ -34,6 +34,7 @@ extern "C" {
     
     CKeyPair age_keygen_c();
     CResult age_encrypt_c(const uint8_t* data, size_t data_len, const char* recipient);
+    CResult age_decrypt_c(const uint8_t* data, size_t data_len, const char* identity);
     void free_c_string(char* s);
     void free_c_bytes(CBytes bytes);
     void free_c_result(CResult result);
@@ -253,6 +254,74 @@ static void AgeEncryptFunction(DataChunk &args, ExpressionState &state, Vector &
     );
 }
 
+// Age decrypt function - decrypts data with a private key or secret name
+static void AgeDecryptFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &data_vector = args.data[0];
+    auto &identity_vector = args.data[1];
+    
+    BinaryExecutor::Execute<string_t, string_t, string_t>(
+        data_vector, identity_vector, result, args.size(),
+        [&](string_t data, string_t identity) {
+            string identity_key = identity.GetString();
+            
+            // Check if this is a secret name (doesn't start with "AGE-SECRET-KEY-1")
+            if (!StringUtil::StartsWith(identity_key, "AGE-SECRET-KEY-1")) {
+                // Try to resolve as secret name
+                auto &context = state.GetContext();
+                auto &secret_manager = SecretManager::Get(context);
+                
+                try {
+                    auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+                    auto secret_entry = secret_manager.GetSecretByName(transaction, identity_key);
+                    if (secret_entry) {
+                        // Cast to KeyValueSecret to access the secret values
+                        const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_entry->secret);
+                        auto private_key_value = kv_secret.TryGetValue("private_key");
+                        if (!private_key_value.IsNull()) {
+                            identity_key = private_key_value.ToString();
+                        } else {
+                            throw InvalidInputException("Secret '" + identity_key + "' does not contain private_key");
+                        }
+                    } else {
+                        throw InvalidInputException("Secret '" + identity_key + "' not found");
+                    }
+                } catch (const std::bad_cast& e) {
+                    throw InvalidInputException("Secret '" + identity_key + "' is not a KeyValueSecret");
+                } catch (const Exception &e) {
+                    // If secret lookup fails, treat as invalid identity key
+                    throw InvalidInputException("Invalid age identity key: " + identity_key + " (not a valid age key or secret name)");
+                }
+            }
+            
+            // Call Rust FFI function with resolved key
+            CResult decrypted = age_decrypt_c(
+                reinterpret_cast<const uint8_t*>(data.GetData()),
+                data.GetSize(),
+                identity_key.c_str()
+            );
+            
+            if (!decrypted.success) {
+                // Decryption failed - throw error with message from Rust
+                string error_msg = "Decryption failed";
+                if (decrypted.error_message != nullptr) {
+                    error_msg = string(decrypted.error_message);
+                }
+                free_c_result(decrypted);
+                throw InvalidInputException(error_msg);
+            }
+            
+            // Create DuckDB blob from decrypted data
+            auto result_str = StringVector::AddString(result, 
+                reinterpret_cast<const char*>(decrypted.data), decrypted.len);
+            
+            // Free the C result
+            free_c_result(decrypted);
+            
+            return result_str;
+        }
+    );
+}
+
 // Dummy function to verify extension loads
 static void AgeVersionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
     auto &result_vector = result;
@@ -274,6 +343,11 @@ static void LoadInternal(DatabaseInstance &instance) {
     auto age_encrypt_fun = ScalarFunction("age_encrypt", {LogicalType::BLOB, LogicalType::VARCHAR}, 
         LogicalType::BLOB, AgeEncryptFunction);
     ExtensionUtil::RegisterFunction(instance, age_encrypt_fun);
+    
+    // Register age_decrypt function
+    auto age_decrypt_fun = ScalarFunction("age_decrypt", {LogicalType::BLOB, LogicalType::VARCHAR}, 
+        LogicalType::BLOB, AgeDecryptFunction);
+    ExtensionUtil::RegisterFunction(instance, age_decrypt_fun);
     
     // Register a dummy function to verify extension loads
     auto age_version_fun = ScalarFunction("age_version", {}, LogicalType::VARCHAR, AgeVersionFunction);
