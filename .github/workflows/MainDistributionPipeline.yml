@@ -75,7 +75,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build ccache
+          sudo apt-get install -y build-essential cmake ninja-build ccache python3-pip
+          pip install "black>=24" cmake-format
       
       - name: Format Check
         run: |
