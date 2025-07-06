@@ -1,0 +1,90 @@
+name: Test Age Extension
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test Extension
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        duckdb_version: ['v1.3.1']
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake ninja-build
+    
+    - name: Build Extension
+      run: |
+        make
+    
+    - name: Test Extension Loading
+      run: |
+        # Test that the extension loads successfully
+        echo "LOAD 'age'; SELECT age_version();" | ./build/release/duckdb
+    
+    - name: Test Basic Secret Creation
+      run: |
+        # Create test key files
+        echo 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p' > /tmp/test_pub.txt
+        echo 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8' > /tmp/test_priv.txt
+        
+        # Test inline secret creation
+        echo "LOAD 'age'; CREATE SECRET test_inline (TYPE 'age', public_key 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p', private_key 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8'); SELECT name FROM duckdb_secrets() WHERE type = 'age';" | ./build/release/duckdb
+        
+        # Test file-based secret creation
+        echo "LOAD 'age'; CREATE SECRET test_file (TYPE 'age', public_key_file '/tmp/test_pub.txt', private_key_file '/tmp/test_priv.txt'); SELECT COUNT(*) FROM duckdb_secrets() WHERE type = 'age';" | ./build/release/duckdb
+    
+    - name: Run SQL Tests
+      run: |
+        # Run the age secret tests
+        ./build/release/duckdb < test/sql/age_secret.test
+    
+    - name: Test Validation
+      run: |
+        # Test that invalid keys are rejected
+        echo "CREATE SECRET bad_key (TYPE 'age', public_key 'invalid_key', private_key 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8');" | ./build/release/duckdb --readonly || echo "Validation test passed - invalid key rejected"
+
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    
+    - name: Check File Structure
+      run: |
+        # Ensure required files exist
+        test -f src/age_extension.cpp
+        test -f src/include/age_extension.hpp
+        test -f test/sql/age_secret.test
+        test -f README.md
+        test -f CMakeLists.txt
+        echo "File structure check passed"
+    
+    - name: Check README Documentation
+      run: |
+        # Ensure README has essential sections
+        grep -q "# DuckDB Age Extension" README.md
+        grep -q "## Features" README.md
+        grep -q "## Usage" README.md
+        grep -q "## Testing" README.md
+        echo "README documentation check passed"

@@ -8,6 +8,7 @@
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/catalog/catalog_transaction.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <fstream>
 #include <sstream>
@@ -24,10 +25,18 @@ extern "C" {
         size_t len;
     };
     
+    struct CResult {
+        bool success;
+        uint8_t* data;
+        size_t len;
+        char* error_message;
+    };
+    
     CKeyPair age_keygen_c();
-    CBytes age_encrypt_c(const uint8_t* data, size_t data_len, const char* recipient);
+    CResult age_encrypt_c(const uint8_t* data, size_t data_len, const char* recipient);
     void free_c_string(char* s);
     void free_c_bytes(CBytes bytes);
+    void free_c_result(CResult result);
 }
 
 namespace duckdb {
@@ -176,7 +185,7 @@ static void AgeKeygenFunction(DataChunk &args, ExpressionState &state, Vector &r
     free_c_string(keys.private_key);
 }
 
-// Age encrypt function - encrypts data with a public key
+// Age encrypt function - encrypts data with a public key or secret name
 static void AgeEncryptFunction(DataChunk &args, ExpressionState &state, Vector &result) {
     auto &data_vector = args.data[0];
     auto &recipient_vector = args.data[1];
@@ -184,24 +193,60 @@ static void AgeEncryptFunction(DataChunk &args, ExpressionState &state, Vector &
     BinaryExecutor::Execute<string_t, string_t, string_t>(
         data_vector, recipient_vector, result, args.size(),
         [&](string_t data, string_t recipient) {
-            // Call Rust FFI function
-            CBytes encrypted = age_encrypt_c(
+            string recipient_key = recipient.GetString();
+            
+            // Check if this is a secret name (doesn't start with "age1")
+            if (!StringUtil::StartsWith(recipient_key, "age1")) {
+                // Try to resolve as secret name
+                auto &context = state.GetContext();
+                auto &secret_manager = SecretManager::Get(context);
+                
+                try {
+                    auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+                    auto secret_entry = secret_manager.GetSecretByName(transaction, recipient_key);
+                    if (secret_entry) {
+                        // Cast to KeyValueSecret to access the secret values
+                        const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_entry->secret);
+                        auto public_key_value = kv_secret.TryGetValue("public_key");
+                        if (!public_key_value.IsNull()) {
+                            recipient_key = public_key_value.ToString();
+                        } else {
+                            throw InvalidInputException("Secret '" + recipient_key + "' does not contain public_key");
+                        }
+                    } else {
+                        throw InvalidInputException("Secret '" + recipient_key + "' not found");
+                    }
+                } catch (const std::bad_cast& e) {
+                    throw InvalidInputException("Secret '" + recipient_key + "' is not a KeyValueSecret");
+                } catch (const Exception &e) {
+                    // If secret lookup fails, treat as invalid recipient key
+                    throw InvalidInputException("Invalid age recipient key: " + recipient_key + " (not a valid age key or secret name)");
+                }
+            }
+            
+            // Call Rust FFI function with resolved key
+            CResult encrypted = age_encrypt_c(
                 reinterpret_cast<const uint8_t*>(data.GetData()),
                 data.GetSize(),
-                recipient.GetString().c_str()
+                recipient_key.c_str()
             );
             
-            if (encrypted.data == nullptr) {
-                // Encryption failed - return NULL
-                return string_t();
+            if (!encrypted.success) {
+                // Encryption failed - throw error with message from Rust
+                string error_msg = "Encryption failed";
+                if (encrypted.error_message != nullptr) {
+                    error_msg = string(encrypted.error_message);
+                }
+                free_c_result(encrypted);
+                throw InvalidInputException(error_msg);
             }
             
             // Create DuckDB blob from encrypted data
             auto result_str = StringVector::AddString(result, 
                 reinterpret_cast<const char*>(encrypted.data), encrypted.len);
             
-            // Free the C bytes
-            free_c_bytes(encrypted);
+            // Free the C result
+            free_c_result(encrypted);
             
             return result_str;
         }

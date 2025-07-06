@@ -16,6 +16,14 @@ pub struct CBytes {
     pub len: usize,
 }
 
+#[repr(C)]
+pub struct CResult {
+    pub success: bool,
+    pub data: *mut u8,
+    pub len: usize,
+    pub error_message: *mut c_char,
+}
+
 #[no_mangle]
 pub extern "C" fn age_keygen_c() -> CKeyPair {
     let identity = x25519::Identity::generate();
@@ -33,15 +41,30 @@ pub extern "C" fn age_encrypt_c(
     data: *const u8,
     data_len: usize,
     recipient: *const c_char,
-) -> CBytes {
+) -> CResult {
     // Convert inputs from C to Rust
     let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
     let recipient_str = unsafe {
         match CStr::from_ptr(recipient).to_str() {
             Ok(s) => s,
-            Err(_) => return CBytes { data: ptr::null_mut(), len: 0 },
+            Err(_) => return CResult { 
+                success: false, 
+                data: ptr::null_mut(), 
+                len: 0,
+                error_message: CString::new("Invalid UTF-8 in recipient key").unwrap().into_raw()
+            },
         }
     };
+    
+    // Check for empty recipient
+    if recipient_str.is_empty() {
+        return CResult {
+            success: false,
+            data: ptr::null_mut(),
+            len: 0,
+            error_message: CString::new("Invalid age recipient key: (empty)").unwrap().into_raw()
+        };
+    }
     
     // Perform encryption
     match age_encrypt_impl(data_slice, recipient_str) {
@@ -49,9 +72,22 @@ pub extern "C" fn age_encrypt_c(
             let len = encrypted.len();
             let data_ptr = encrypted.as_ptr() as *mut u8;
             std::mem::forget(encrypted); // Prevent Rust from freeing the memory
-            CBytes { data: data_ptr, len }
+            CResult { 
+                success: true, 
+                data: data_ptr, 
+                len,
+                error_message: ptr::null_mut()
+            }
         }
-        Err(_) => CBytes { data: ptr::null_mut(), len: 0 },
+        Err(e) => {
+            let error_msg = format!("Invalid age recipient key: {}", recipient_str);
+            CResult { 
+                success: false, 
+                data: ptr::null_mut(), 
+                len: 0,
+                error_message: CString::new(error_msg).unwrap().into_raw()
+            }
+        }
     }
 }
 
@@ -87,6 +123,20 @@ pub extern "C" fn free_c_bytes(bytes: CBytes) {
     if !bytes.data.is_null() {
         unsafe {
             let _ = Vec::from_raw_parts(bytes.data, bytes.len, bytes.len);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_c_result(result: CResult) {
+    if !result.data.is_null() {
+        unsafe {
+            let _ = Vec::from_raw_parts(result.data, result.len, result.len);
+        }
+    }
+    if !result.error_message.is_null() {
+        unsafe {
+            let _ = CString::from_raw(result.error_message);
         }
     }
 }

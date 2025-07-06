@@ -2,22 +2,46 @@
 # description: test age extension
 # group: [sql]
 
-# Before we load the extension, this will fail
-statement error
-SELECT age('Sam');
-----
-Catalog Error: Scalar Function with name age does not exist!
-
 # Require statement will ensure this test is run with this extension loaded
 require age
 
-# Confirm the extension works
+# Test age_keygen function
 query I
-SELECT age('Sam');
-----
-Age Sam 🐥
-
-query I
-SELECT age_openssl_version('Michael') ILIKE 'Age Michael, my linked OpenSSL version is OpenSSL%';
+SELECT (age_keygen(0)).public_key LIKE 'age1%' AS valid_public_key;
 ----
 true
+
+query I
+SELECT (age_keygen(0)).private_key LIKE 'AGE-SECRET-KEY-1%' AS valid_private_key;
+----
+true
+
+# Test age_encrypt function with valid key
+statement ok
+WITH keys AS (SELECT (age_keygen(0)).public_key AS pubkey) 
+SELECT age_encrypt('hello world'::BLOB, pubkey) IS NOT NULL AS encrypted FROM keys;
+
+# Test age_encrypt with invalid key should throw error
+statement error
+SELECT age_encrypt('hello world'::BLOB, 'invalid_key');
+----
+Invalid Input Error: Invalid age recipient key: invalid_key
+
+# Test age_encrypt with malformed age key should throw error  
+statement error
+SELECT age_encrypt('hello world'::BLOB, 'age1invalid');
+----
+Invalid Input Error: Invalid age recipient key: age1invalid
+
+# Test age_encrypt with empty key should throw error
+statement error
+SELECT age_encrypt('hello world'::BLOB, '');
+----
+Invalid Input Error: Invalid age recipient key: (empty)
+
+# Test age_encrypt with secret name
+statement ok
+CREATE SECRET test_secret (TYPE age, PUBLIC_KEY 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u', PRIVATE_KEY 'AGE-SECRET-KEY-1DMYUTPVUSD3M7HMU4K5KXNZ65JZVC9J04MSVV2J8Y4NE8GZCVU6ST7DRT2');
+
+statement ok
+SELECT age_encrypt('hello world'::BLOB, 'test_secret') IS NOT NULL AS encrypted;
