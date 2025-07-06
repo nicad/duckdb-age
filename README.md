@@ -1,15 +1,29 @@
 # DuckDB Age Extension
 
-A DuckDB extension that registers the 'age' secret type, enabling native secret management for [age encryption](https://github.com/FiloSottile/age) keys within DuckDB. This extension allows you to securely store and manage age encryption key pairs for use with other extensions like [file-tools](https://github.com/duckdb/file-tools-extension).
+A comprehensive DuckDB extension providing modern encryption functions using the [age encryption specification](https://github.com/FiloSottile/age). This extension combines native secret management with high-performance encryption functions, implemented using a hybrid C++/Rust architecture.
 
 ## Features
 
+### Core Encryption Functions
+- **Key Generation**: Generate X25519 key pairs (`age_keygen`)
+- **Single Recipient Encryption**: Encrypt data for one recipient (`age_encrypt`)
+- **Multi-Recipient Encryption**: Encrypt data for multiple recipients (`age_encrypt_multi`)
+- **Decryption**: Decrypt age-encrypted data (`age_decrypt`)
+- **Hybrid Architecture**: High-performance Rust cryptography with DuckDB C++ integration
+
+### Secret Management Integration
 - **Native Secret Management**: Integrates with DuckDB's built-in secret management system
 - **Age Key Validation**: Validates age public keys (`age1...`) and private keys (`AGE-SECRET-KEY-1...`)
 - **File-based Keys**: Support for reading keys from external files (recommended for security)
 - **Inline Keys**: Support for inline key specification
 - **Key Redaction**: Private keys are automatically redacted in logs and error messages
 - **Flexible Configuration**: Mix and match inline keys with file-based keys
+
+### Security & Performance
+- **Modern Cryptography**: X25519 (key exchange) + ChaCha20-Poly1305 (encryption)
+- **Age Format Compatibility**: Full compatibility with standard age tools and libraries
+- **Comprehensive Error Handling**: Detailed error messages for invalid keys and operations
+- **Memory Safe**: Rust implementation with proper FFI memory management
 
 ## Installation
 
@@ -37,6 +51,45 @@ The build produces:
 ```sql
 LOAD 'age';
 ```
+
+## Encryption Functions
+
+For detailed documentation of all age encryption functions, see [FUNCTIONS.md](FUNCTIONS.md).
+
+### Quick Examples
+
+#### Generate Keys
+```sql
+-- Generate a new key pair
+SELECT age_keygen(0) AS keys;
+```
+
+#### Encrypt Data
+```sql
+-- Encrypt with raw public key
+SELECT age_encrypt('secret data'::BLOB, 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p');
+
+-- Encrypt with secret name
+CREATE SECRET my_key (TYPE age, PUBLIC_KEY 'age1...', PRIVATE_KEY 'AGE-SECRET-KEY-1...');
+SELECT age_encrypt('secret data'::BLOB, 'my_key');
+```
+
+#### Decrypt Data
+```sql
+-- Decrypt with raw private key
+SELECT age_decrypt(encrypted_data, 'AGE-SECRET-KEY-1...');
+
+-- Decrypt with secret name
+SELECT age_decrypt(encrypted_data, 'my_key');
+```
+
+#### Multi-Recipient Encryption
+```sql
+-- Encrypt for multiple recipients
+SELECT age_encrypt_multi('data'::BLOB, ['key1', 'key2', 'key3']);
+```
+
+## Secret Management
 
 ### Creating Age Secrets
 
@@ -141,19 +194,38 @@ LOAD 'age';
 -- Verify extension loads
 SELECT age_version();
 
--- Create test key files
-.system echo 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p' > /tmp/test_pub.txt
-.system echo 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8' > /tmp/test_priv.txt
+-- Test key generation
+SELECT age_keygen(0) AS keys;
 
--- Test file-based secret creation
+-- Test encryption functions
+WITH keys AS (SELECT age_keygen(0) AS kp)
+SELECT 
+    age_encrypt('hello world'::BLOB, (kp).public_key) AS encrypted_data,
+    (kp).private_key AS private_key
+FROM keys;
+
+-- Test decryption 
+WITH keys AS (SELECT age_keygen(0) AS kp),
+     encrypted AS (
+         SELECT age_encrypt('test message'::BLOB, (kp).public_key) AS data,
+                (kp).private_key AS priv
+         FROM keys
+     )
+SELECT age_decrypt(data, priv) = 'test message'::BLOB AS round_trip_success
+FROM encrypted;
+
+-- Test secret creation and usage
 CREATE SECRET test_key (
     TYPE 'age',
-    public_key_file '/tmp/test_pub.txt',
-    private_key_file '/tmp/test_priv.txt'
+    PUBLIC_KEY 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p',
+    PRIVATE_KEY 'AGE-SECRET-KEY-1QTAYQ69LA4P3QQN0VQPSJMG2WHVSQPQ3SG2F55M0XWDE9VQN0SZQCGUGJ8'
 );
 
--- Verify secret creation
-SELECT * FROM duckdb_secrets() WHERE type = 'age';
+-- Test encryption with secret names
+SELECT age_encrypt('secret data'::BLOB, 'test_key') IS NOT NULL AS encrypted;
+
+-- Test multi-recipient encryption
+SELECT age_encrypt_multi('multi test'::BLOB, ['test_key', 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p']) IS NOT NULL AS multi_encrypted;
 
 -- Clean up
 DROP SECRET test_key;
@@ -162,31 +234,36 @@ DROP SECRET test_key;
 ### Test Coverage
 
 The test suite covers:
-- Basic secret creation with inline keys
-- File-based key loading
-- Validation of key formats
-- Error handling for invalid keys
-- Error handling for missing files
-- Mutual exclusivity validation
-- Secret listing and management
+- **Encryption Functions**: Key generation, encryption, decryption, multi-recipient encryption
+- **Secret Integration**: Using secret names in encryption functions
+- **Error Handling**: Invalid keys, malformed data, empty parameters
+- **Round-trip Testing**: Encrypt/decrypt validation
+- **Secret Management**: Creation with inline keys, file-based key loading
+- **Validation**: Key format validation, mutual exclusivity
+- **Edge Cases**: Empty recipients, wrong keys, missing secrets
 
 ## Integration with Other Extensions
 
-This extension is designed to work with other DuckDB extensions that support age encryption:
+This extension provides both standalone encryption functions and secret management integration:
 
 ```sql
--- Example with file-tools extension (hypothetical)
+-- Standalone usage
 LOAD 'age';
-LOAD 'file_tools';
 
-CREATE SECRET my_age_key (
+-- Generate keys and encrypt data directly
+WITH keys AS (SELECT age_keygen(0) AS kp)
+SELECT age_encrypt('sensitive data'::BLOB, (kp).public_key) AS encrypted;
+
+-- Create secrets for reusable keys
+CREATE SECRET company_key (
     TYPE 'age',
-    public_key_file '~/.age/key.pub',
-    private_key_file '~/.age/key.priv'
+    PUBLIC_KEY 'age1...',
+    PRIVATE_KEY 'AGE-SECRET-KEY-1...'
 );
 
--- Use the secret for encryption/decryption operations
--- SELECT age_encrypt_file('data.txt', 'encrypted.age', 'my_age_key');
+-- Use secrets in encryption functions
+SELECT age_encrypt('confidential'::BLOB, 'company_key');
+SELECT age_encrypt_multi('team data'::BLOB, ['company_key', 'backup_key']);
 ```
 
 ## Security Considerations
@@ -203,14 +280,18 @@ CREATE SECRET my_age_key (
 ```
 duckdb-age/
 ├── src/
-│   ├── age_extension.cpp     # Main extension implementation
+│   ├── age_extension.cpp      # Main C++ extension implementation
 │   └── include/
-│       └── age_extension.hpp # Extension header
+│       └── age_extension.hpp  # Extension header
+├── rust/
+│   ├── src/lib.rs            # Rust FFI implementation
+│   └── Cargo.toml           # Rust dependencies
 ├── test/sql/
-│   ├── age.test             # Basic extension tests
-│   └── age_secret.test      # Secret functionality tests
-├── extension_config.cmake   # Extension configuration
-└── README.md               # This file
+│   ├── age.test              # Encryption function tests
+│   └── age_secret.test       # Secret functionality tests
+├── FUNCTIONS.md              # Detailed function documentation
+├── extension_config.cmake    # Extension configuration
+└── README.md                # This file
 ```
 
 ### Building for Development

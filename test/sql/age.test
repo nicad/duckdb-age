@@ -37,7 +37,7 @@ Invalid Input Error: Invalid age recipient key: age1invalid
 statement error
 SELECT age_encrypt('hello world'::BLOB, '');
 ----
-Invalid Input Error: Invalid age recipient key: (empty)
+Invalid Input Error: Invalid age recipient key:  (not a valid age key or secret name)
 
 # Test age_encrypt with secret name
 statement ok
@@ -78,7 +78,7 @@ true
 statement error
 SELECT age_decrypt(age_encrypt('test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'), 'invalid_key');
 ----
-Decryption failed
+Invalid Input Error: Invalid age identity key: invalid_key (not a valid age key or secret name)
 
 # Test age_decrypt with wrong private key should throw error
 statement error
@@ -93,4 +93,41 @@ Decryption failed
 statement error
 SELECT age_decrypt(age_encrypt('test'::BLOB, 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u'), '');
 ----
-Invalid age identity key: (empty)
+Invalid Input Error: Invalid age identity key:  (not a valid age key or secret name)
+
+# Test age_encrypt_multi with multiple recipients
+statement ok
+CREATE TABLE multi_keys AS SELECT (age_keygen(0)) AS k1, (age_keygen(0)) AS k2;
+
+query II
+WITH k AS (SELECT (k1).public_key AS pk1, (k2).public_key AS pk2, 
+                  (k1).private_key AS sk1, (k2).private_key AS sk2 FROM multi_keys),
+     encrypted AS (SELECT age_encrypt_multi('multi test'::BLOB, [pk1, pk2]) AS data FROM k)
+SELECT 
+    age_decrypt(data, sk1) = 'multi test'::BLOB AS decrypt_with_key1,
+    age_decrypt(data, sk2) = 'multi test'::BLOB AS decrypt_with_key2
+FROM k, encrypted;
+----
+true	true
+
+# Test age_encrypt_multi with empty recipients list should throw error
+statement error
+SELECT age_encrypt_multi('test'::BLOB, []);
+----
+Recipients list cannot be empty
+
+# Test age_encrypt_multi with invalid recipient should throw error
+statement error
+SELECT age_encrypt_multi('test'::BLOB, ['invalid_key']);
+----
+Invalid Input Error: Invalid recipient: invalid_key
+
+# Test age_encrypt_multi with mix of keys and secrets
+statement ok
+CREATE SECRET multi_test_secret (TYPE age, PUBLIC_KEY 'age1j2tqev8spvn9s9ktkr750ntl03sy20f7dck0mdyetway3cj2naasngwz3u', PRIVATE_KEY 'AGE-SECRET-KEY-1DMYUTPVUSD3M7HMU4K5KXNZ65JZVC9J04MSVV2J8Y4NE8GZCVU6ST7DRT2');
+
+query I
+WITH k AS (SELECT (k1).public_key AS pk1 FROM multi_keys)
+SELECT age_encrypt_multi('mixed'::BLOB, [pk1, 'multi_test_secret']) IS NOT NULL AS encrypted FROM k;
+----
+true
